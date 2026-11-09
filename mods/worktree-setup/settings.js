@@ -97,8 +97,10 @@ function includePatterns(worktreeinclude, layers) {
 
 /**
  * files: each key of FILES mapped to that file's text, or null when it's absent.
- * Returns { configured, setup, archive, include, env }: `configured` is false when none of the
- * files exist, so nothing should run. Throws when a file can't be read, naming the file.
+ * Returns { configured, setup, archive, include, env }: `configured` is false unless some file
+ * sets a setup or archive script or Files to copy, so nothing should run. A file that exists
+ * for other reasons (Conductor's own ~/.conductor/settings.toml, say) doesn't count, and nor
+ * does the default ".env*". Throws when a file can't be read, naming the file.
  */
 export function resolveSettings(files) {
   const local = merge(parse(files, "localJson"), parse(files, "localToml"), parse(files, "herdrLocal"));
@@ -108,15 +110,17 @@ export function resolveSettings(files) {
   const user = merge(parse(files, "userJson"), parse(files, "userToml"), parse(files, "herdrUser"));
   const layers = [local, repo, user];
 
-  const configured = Object.values(files).some((text) => text !== null && text !== undefined);
   const script = (name) => {
     const value = lookup(layers, ["scripts", name]);
     return typeof value === "string" ? value.trim() : "";
   };
+  const setup = script("setup");
+  const archive = script("archive");
+  const includeSet = typeof files.include === "string" || lookup(layers, ["file_include_globs"]) !== undefined;
   return {
-    configured,
-    setup: script("setup"),
-    archive: script("archive"),
+    configured: Boolean(setup || archive || includeSet),
+    setup,
+    archive,
     include: includePatterns(files.include, layers).trim(),
     env: environment(layers),
   };

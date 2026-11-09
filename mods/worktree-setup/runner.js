@@ -13,6 +13,13 @@
 //
 // It's a String.raw template, so it can't hold a backtick or a dollar-brace: those would end
 // or interpolate the template.
+//
+// Herdr's pane header names a shell's pane after the shell ("bash", "zsh") and any other
+// program's after its title, and it tells which by argv[0]. So the runner, and the shell a
+// failed setup opens, run as PROCESS_NAME: the header then shows the title the runner sets.
+// The bash below spells the name out too; keep the two the same.
+
+export const PROCESS_NAME = "worktree-setup";
 
 export const RUNNER = String.raw`
 dim() { printf '\033[2m%s\033[0m\n' "$1"; }
@@ -66,9 +73,14 @@ printf 'Fix the problem here or in the settings, then type \033[1mexit\033[0m to
 printf 'To skip setup, close this pane.\n\n'
 shell=$SHELL
 [ -n "$shell" ] || shell=/bin/bash
-"$shell" -l
+# Renamed so the header keeps the title. DISABLE_AUTO_TITLE stops oh-my-zsh retitling the
+# terminal at every prompt; a prompt that sets its own title another way still wins.
+(export DISABLE_AUTO_TITLE=true; exec -a worktree-setup "$shell" -l)
 printf 'retry\n' > "$marker"
 `;
+
+// The setup pane's program: bash, running RUNNER as PROCESS_NAME.
+export const SETUP_ARGV = ["bash", "-c", `exec -a ${PROCESS_NAME} bash -c "$1"`, PROCESS_NAME, RUNNER];
 
 // The script a background terminal runs after a worktree is removed. Conductor runs its
 // archive script inside the workspace before deleting it; here the worktree is already gone,

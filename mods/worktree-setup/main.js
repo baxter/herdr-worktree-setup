@@ -11,7 +11,7 @@
 import { View, div } from "gpui-kit";
 import { spaces, panes, exec, hc, readTextFile, run, notify, shared, setShared, home } from "herdr";
 import { resolveSettings, FILES } from "./settings.js";
-import { RUNNER, ARCHIVE_RUNNER } from "./runner.js";
+import { SETUP_ARGV, ARCHIVE_RUNNER } from "./runner.js";
 import * as worktree from "./worktree.js";
 
 // The marker file, kept in the worktree's own git folder so it goes when the worktree does.
@@ -141,7 +141,7 @@ export default class WorktreeSetup extends View {
     job.before = new Set(tabPanes.map((p) => p.pane));
     job.pane = null;
     job.state = "running";
-    run("pane.split", { direction: "down", pane: anchor.pane, argv: ["env", ...worktree.envArguments(env), "bash", "-c", RUNNER] });
+    run("pane.split", { direction: "down", pane: anchor.pane, argv: ["env", ...worktree.envArguments(env), ...SETUP_ARGV] });
     run("pane.focus", { pane: anchor.pane }); // the agent keeps the keyboard
     this.jobs.set(repo.gitDir, job);
   }

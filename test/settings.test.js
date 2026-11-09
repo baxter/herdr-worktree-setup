@@ -58,6 +58,19 @@ test("a .worktreeinclude alone counts as configured", () => {
   assert.equal(resolve({ include: ".env.local" }).configured, true);
 });
 
+test("files that set no scripts or Files to copy don't count as configured", () => {
+  const conductorOwn = 'tool_approvals_enabled = true\n[git]\nbranch_prefix_type = "none"\n[models]\ndefault = "opus"';
+  assert.equal(resolve({ userToml: conductorOwn }).configured, false);
+  assert.equal(resolve({ repoToml: '[environment_variables]\nA = "1"' }).configured, false);
+  assert.equal(resolve({ herdrRepo: '[scripts]\nsetup = "  "' }).configured, false);
+});
+
+test("a setup, an archive or file_include_globs at any level counts as configured", () => {
+  assert.equal(resolve({ herdrUser: '[scripts]\nsetup = "npm ci"' }).configured, true);
+  assert.equal(resolve({ repoToml: '[scripts]\narchive = "docker compose down"' }).configured, true);
+  assert.equal(resolve({ userToml: 'file_include_globs = ".env.local"' }).configured, true);
+});
+
 test("local environment variables apply, cloud ones don't", () => {
   const repoToml = '[environment_variables]\nA = "plain"\nB = 2\n[environment_variables.local]\nA = "local"\n[environment_variables.cloud]\nC = "cloud"';
   assert.deepEqual(resolve({ repoToml }).env, { A: "local", B: "2" });

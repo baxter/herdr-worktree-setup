@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RUNNER, ARCHIVE_RUNNER } from "../mods/worktree-setup/runner.js";
+import { RUNNER, ARCHIVE_RUNNER, SETUP_ARGV, PROCESS_NAME } from "../mods/worktree-setup/runner.js";
 
 let base, root;
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
@@ -76,6 +76,26 @@ test("a failing script opens a shell, and leaving it asks for setup again", () =
   assert.match(result.stdout, /Setup failed \(exit 3\)/);
   assert.match(result.stdout, /type .*exit.* to run setup again/);
   assert.equal(marker, "retry", "the shell (true here) exited at once");
+});
+
+test("the runner and the shell a failed setup opens run as worktree-setup, not as a shell", () => {
+  const workspace = join(base, "named");
+  git(root, "worktree", "add", "-q", "-b", "named", workspace);
+  const marker = join(base, "named.marker");
+  // The runner is the script's parent; the shell, a login bash here, reads its commands from stdin.
+  const result = spawnSync(SETUP_ARGV[0], SETUP_ARGV.slice(1), {
+    encoding: "utf8",
+    input: 'echo "$0 $DISABLE_AUTO_TITLE" > shell-name\n',
+    env: {
+      PATH: process.env.PATH, HOME: base, SHELL: "/bin/bash",
+      CONDUCTOR_ROOT_PATH: root, CONDUCTOR_WORKSPACE_PATH: workspace, CONDUCTOR_WORKSPACE_NAME: "named",
+      WORKTREE_SETUP_INCLUDE: "", WORKTREE_SETUP_SCRIPT: "ps -o args= -p $PPID > runner-name; exit 1", WORKTREE_SETUP_MARKER: marker,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(join(workspace, "runner-name"), "utf8"), new RegExp(`^${PROCESS_NAME} `));
+  assert.equal(readFileSync(join(workspace, "shell-name"), "utf8"), `${PROCESS_NAME} true\n`);
+  assert.equal(readFileSync(marker, "utf8").trim(), "retry");
 });
 
 test("files already in the worktree are left alone", () => {

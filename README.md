@@ -20,6 +20,11 @@ When a space opens on a new worktree:
    open on a shell in the worktree. Fix the problem there or in the settings, then type
    `exit` to run setup again. Close the pane to skip setup.
 
+When a worktree the mod set up is removed (Herdr's Remove worktree, or `git worktree
+remove`), it runs the repo's `scripts.archive` in a background terminal from the main
+checkout, and a toast says how it went. It looks a few seconds after a space closes, and once
+a minute otherwise. If the archive script fails, clicking the toast shows its output.
+
 ## Install
 
 1. Copy `mods/worktree-setup` into `~/.config/herdr-app/mods/`.
@@ -57,12 +62,14 @@ From those files it uses:
 
 - `scripts.setup`: the setup script. It runs with `zsh` (or `bash` when there's no zsh) in
   the new worktree.
+- `scripts.archive`: the archive script. It runs the same way, from the main checkout, once
+  the worktree is gone.
 - Files to copy: `.worktreeinclude` at the repo root, else `file_include_globs`, else `.env*`.
   Patterns use `.gitignore` syntax, and only gitignored files are copied. Files already in
   the worktree are never overwritten.
 - `environment_variables` and `environment_variables.local`.
 
-The setup script gets these variables, each under a `HERDR_` name and a `CONDUCTOR_` name,
+The setup and archive scripts get these variables, each under a `HERDR_` name and a `CONDUCTOR_` name,
 so Conductor scripts work unchanged:
 
 | Variable | Value |
@@ -75,13 +82,17 @@ so Conductor scripts work unchanged:
 
 `CONDUCTOR_IS_LOCAL=1` is set too.
 
-A repo with none of these files is left alone.
+A repo is set up only when some level sets `scripts.setup`, `scripts.archive` or
+`file_include_globs`, or the repo has a `.worktreeinclude`. A file that sets none of those
+doesn't count, and nor does the `.env*` default. So Conductor's own
+`~/.conductor/settings.toml`, which usually holds only model and git preferences, doesn't
+set up every repo you open.
 
 ## Not covered yet
 
-- The archive script and Run actions (`scripts.archive`, `scripts.run`).
-- The `HERDR_*` and `CONDUCTOR_*` variables reach the setup script only. Your agent's
-  terminal doesn't get them.
+- Run actions (`scripts.run`).
+- The `HERDR_*` and `CONDUCTOR_*` variables reach the setup and archive scripts only. Your
+  agent's terminal doesn't get them.
 - Repository settings are read from the main checkout's working tree. Conductor reads them
   from the default branch.
 - Worktrees of a bare repository (there's no main checkout to copy from).
