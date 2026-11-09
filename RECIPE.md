@@ -4,8 +4,9 @@ When a space opens on a new git worktree, a pane slides in under its first termi
 runs the repository's setup: it copies gitignored files such as `.env` from the main
 checkout, then runs `scripts.setup` from `.herdr/settings.toml` (or Conductor's
 `.conductor/settings.toml`, which takes the same keys). When setup
-succeeds, the pane closes and a toast says so. When it fails, the pane stays open on a shell
-in the worktree, and a toast says what happened. When a worktree it set up is removed, it
+succeeds, the pane closes and a toast says so. When it fails, the pane stays open and asks
+whether to run setup again, open a shell in the worktree, or skip setup, and a toast says
+what happened. When a worktree it set up is removed, it
 runs `scripts.archive` in a background terminal from the main checkout and posts a toast with
 the result.
 
@@ -22,12 +23,14 @@ the result.
   `Copying files from <main checkout>`, then each copied path indented two spaces (or
   `nothing matched`, or `<path> is already there`); then `Running the setup script` and the
   script's lines, each indented; then the script's own output. It ends with a green
-  `✓ Setup finished`, or a red `✗ Setup failed (exit N).` followed by `Fix the problem
-  here or in the settings, then type exit to run setup again.` and `To skip setup, close
-  this pane.`
+  `✓ Setup finished`, or a red `✗ Setup failed (exit N).` followed by `How would you like
+  to proceed?` and three choices, each key in
+  bold, indented two spaces: `r  Run setup again`, `s  Open a shell in the worktree (exit to come back here)`,
+  `q  Skip setup and close this pane`. Choosing `s` prints, dimmed, `Type exit to come back
+  to these choices.` above the shell.
 - Toasts (Herdr's `notify`): success `"<name> is set up"` (level success, 4 s). Failure
-  `"Setup failed in <name>"`, body `Exit N. Its pane is still open: fix the problem, then
-  type exit to run setup again.` (level error; clicking it selects that space). A settings
+  `"Setup failed in <name>"`, body `Exit N. Its pane is still open: run setup again, open
+  a shell to fix it, or skip.` (level error; clicking it selects that space). A settings
   file that can't be parsed: `"Worktree setup didn't start"` with the file name and line.
   Archive: success `"Cleaned up after <name>"` (level success, 4 s). Failure `"Cleanup
   failed after <name>"`, body `Exit N. Click to see its output (or run: hc read <address>).`
@@ -47,12 +50,20 @@ the result.
   preferences) don't count, and nor does the `.env*` default.
 - Success: the runner writes `ok` to the marker and exits, and the pane closes itself. The
   mod, polling every 1.5 s while a setup is open, posts the success toast.
-- Failure: the runner writes `failed N` and starts a login shell in the worktree, with the
-  `HERDR_*` and `CONDUCTOR_*` variables set, run as `worktree-setup` with
-  `DISABLE_AUTO_TITLE=true`. Typing `exit` writes `retry` and ends the
-  runner, which closes the pane. The mod then reads the settings again and opens a fresh
-  setup pane in the same place. Closing the
-  pane instead abandons setup: the marker stays `failed N`, so it isn't retried.
+- Failure: the runner writes `failed N` and waits for one key (`read -r -s -n 1`, upper or
+  lower case; anything else is ignored, without printing the choices again).
+  - `r` writes `retry` and ends the runner, which closes the pane. The mod then reads the
+    settings again and opens a fresh setup pane in the same place.
+  - `s` starts a login shell in the worktree, with the `HERDR_*` and `CONDUCTOR_*` variables
+    set, run as `worktree-setup` with `DISABLE_AUTO_TITLE=true`. When it exits, the runner
+    sets the title again and shows the choices again.
+  - `q`, or stdin closing, ends the runner with the marker still `failed N`, so it isn't
+    retried. Closing the pane does the same.
+- Reloads and restarts: the mod keeps its setups in memory, so when it starts it looks again
+  at every space. A worktree whose marker says `failed` or `running` and whose setup pane is
+  still open is followed again, with no second failure toast. Its pane is the live terminal
+  whose command includes `WORKTREE_SETUP_MARKER=<marker>`. A marker saying `retry` (`r`
+  pressed while nothing was watching) launches setup again. Anything else is left alone.
 - Removal: every worktree the mod launched a setup for is remembered. It counts as removed
   once `<worktree>/.git` is gone. The mod checks 5 s after it starts (catching removals while
   Herdr was closed), 3 s after the number of spaces drops (Herdr's Remove worktree closes the
@@ -117,7 +128,14 @@ the result.
   3. Matches are copied with `cp -Rp`, skipping anything that already exists and anything
      inside a folder that was just copied.
 
-  The setup script runs with `zsh -c` (else `bash -c`).
+  The setup script runs with `zsh -c` (else `bash -c`), after `use_shell_path`. That's a
+  bash function both runners start with (`SHELL_PATH`). It runs
+  `"$SHELL" +m -lic 'printenv PATH > "$WORKTREE_SETUP_PATH_FILE"'` in the current folder,
+  in the background, with `DISABLE_AUTO_UPDATE=true` and stdin, stdout and stderr on
+  `/dev/null`. It polls every 0.1 s and kills the shell after `WORKTREE_SETUP_SHELL_WAIT`
+  seconds (default 10). If the file isn't empty, it exports that as `PATH`. Only for a
+  `$SHELL` ending in `/zsh` or `/bash`; otherwise, or on failure, the runner prints, dimmed,
+  `with Herdr's PATH: your shell's couldn't be read`.
 
   `ARCHIVE_RUNNER`, the second script, sets the title `Clean up · <name>`, `cd`s to
   `HERDR_ROOT_PATH`, prints the script dimmed, then `exec`s `zsh -c` (else `bash -c`) on
@@ -130,10 +148,15 @@ the result.
   block of 10 from 55000, kept per worktree). Plus `CONDUCTOR_IS_LOCAL=1` and the settings'
   environment variables (the built-in ones win).
 - Programs it runs: `git`, `bash`, `zsh` if present, `env`, `cp`, `mktemp`, `sed`, `sh`,
-  and `hc` for the archive terminal. No network.
+  `printenv`, `sleep`, the person's `$SHELL` (for its `PATH`), and `hc` for the archive
+  terminal. No network.
 
 ## Watch out
 
+- Setups live in `this.jobs`, in memory. A mod reload (any save under the mod's folder) or
+  a Herdr restart empties it while setup panes stay open. Without `onFirstSight`, a failed
+  setup's marker made the worktree look done, and choosing to retry wrote `retry` with
+  nothing watching, so setup never ran again.
 - A `Map` visits keys added during a `for…of` loop. A retry deletes its job and `launch()`
   re-adds it, so poll over a copy (`[...this.jobs]`), or a retry launches twice.
 - `String.raw` keeps a backslash before `${`, so the bash script can't use `${…}` at all.
@@ -145,7 +168,11 @@ the result.
   `exec -a worktree-setup`. The failure shell also gets `DISABLE_AUTO_TITLE=true`, or
   oh-my-zsh retitles the terminal (`user@host:~/path`) at every prompt. Other prompts that
   set a title still win. `exec -a` only works on a program bash starts, which is why the
-  failure shell is in a `( … )` subshell: the runner has to outlive it to write `retry`.
+  failure shell is in a `( … )` subshell: the runner has to outlive it to show the choices
+  again.
+- Retrying used to be "type exit in the failure shell". People type `exit` to leave, and a
+  rerun can be expensive (a setup that rebuilds a database, say), so a failure asks
+  instead: one key for `r`, `s` or `q`. A rerun always needs `r`.
 - `%ct` in `git log -g` is the commit's date, not the reflog entry's. Use
   `--date=unix --format=%gd`.
 - `ls-files -o -i -x <patterns>` without `--exclude-standard` walks `node_modules` and
@@ -153,9 +180,21 @@ the result.
 - Don't run setup from a `post-checkout` hook or inside `exec`. `exec` has a 30-second
   limit, and setup output belongs in a pane.
 - `pane.split` with `argv` runs the program directly: when it exits, the terminal ends and
-  its pane closes itself. So the runner opens its own login shell on failure, and the mod
-  must never `pane.close` a setup pane: it races the exit and fails with `no pane "…"`. Interactive login-shell PATH
-  additions (mise, nvm) did reach the script in testing on macOS.
+  its pane closes itself. So the runner opens its own login shell on `s`, and the mod
+  must never `pane.close` a setup pane: it races the exit and fails with `no pane "…"`.
+- Herdr's terminals get the login shell's `PATH`, not an interactive shell's. On macOS,
+  `/etc/zprofile`'s `path_helper` moves `/usr/bin` to the front after `~/.zshenv` has added
+  a version manager's folders, and `zsh -c` never reads `~/.zshrc`, which would put them
+  back. So a plain `zsh -c "$WORKTREE_SETUP_SCRIPT"` found the system's copy of a tool, not
+  the version-managed one a terminal finds. Hence `use_shell_path`. Its gotchas:
+  - Read `PATH` from a file, not from the shell's output: terminal shell integrations print
+    escape codes during interactive startup.
+  - `+m` is required. Without it, the interactive zsh takes the terminal over and leaves a
+    dead process group in front: the runner's next read from the terminal fails, so the
+    failure shell can't work. Tested in an `hc` pty with zsh and with bash 3.2.
+  - Give it no stdin and a time limit: oh-my-zsh's default update mode asks a question at
+    startup.
+  - Other shells don't all take `+m -lic`, so they're skipped, not guessed at.
 - Spaces the person opens on existing worktrees made before install are skipped on purpose.
   Clearing `worktree-setup.installed-at` would make every unmarked worktree look new.
 - `space.new` selects the new space, so testing live moves the person's window.
@@ -184,12 +223,19 @@ the result.
   others come from `.conductor`. The marker in `.git/worktrees/<name>/herdr-worktree-setup` reads
   `ok`.
 - With a `settings.local.toml` setup that ends in `exit 1`, the pane stays open showing the
-  failure message, and an error toast appears. Fixing the file and typing `exit` opens one
-  new pane (not two), which runs the fixed script and closes.
+  failure message and the three choices, and an error toast appears. Other keys do
+  nothing. `s` opens a shell, and `exit` there shows the choices again. After fixing the
+  file, `r` opens one new pane (not two), which runs the fixed script and closes. `q` closes
+  the pane and leaves the marker at `failed 1`.
 - A space on a worktree made before install, or in a repo with no Conductor files, gets no
   pane. Neither does one in a repo whose only file is a `~/.conductor/settings.toml` that sets
   no scripts or `file_include_globs`.
 - With `scripts.archive` set, removing a worktree that was set up runs the archive script
   from the main checkout within a few seconds, and `"Cleaned up after <name>"` appears. The
   worktree's entry leaves `shared("worktree-setup.worktrees")`.
+- After a failed setup, saving a file in the mod's folder (a reload), then fixing the
+  settings and pressing `r`, still opens one new setup pane that runs and closes.
+- On macOS, with a version manager set up in `~/.zshrc` that provides a tool also in
+  `/usr/bin`, a setup script that runs `command -v <tool>` finds the version manager's copy,
+  not `/usr/bin/<tool>`.
 - `npm test` passes.

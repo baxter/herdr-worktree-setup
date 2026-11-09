@@ -56,3 +56,16 @@ test("the marker says how setup went", () => {
   assert.deepEqual(worktree.parseMarker("retry\n"), { state: "retry" });
   assert.equal(worktree.parseMarker(null), null);
 });
+
+test("on first sight, a setup left over from before a reload is followed or retried", () => {
+  const sight = (marker, isNew, setupPaneOpen) => worktree.onFirstSight(marker, { isNew, setupPaneOpen });
+  assert.equal(sight(null, true, false), "launch", "new");
+  assert.equal(sight(null, false, false), null, "made before install");
+  assert.equal(sight("failed 1\n", false, true), "watch", "failed, its pane still open");
+  assert.equal(sight("running\n", false, true), "watch", "still running");
+  assert.equal(sight("failed 1\n", false, false), null, "its pane was closed: abandoned");
+  assert.equal(sight("running\n", false, false), null, "its pane is gone");
+  assert.equal(sight("retry\n", false, false), "launch", "r pressed while nothing was watching");
+  assert.equal(sight("ok\n", false, false), null, "done");
+  assert.equal(sight("", false, true), null, "a marker it can't read");
+});

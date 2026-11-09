@@ -17,8 +17,12 @@ When a space opens on a new worktree:
 2. Gitignored files you've listed (`.env*` by default) are copied in from the main checkout.
 3. The setup script runs, with variables such as `HERDR_ROOT_PATH` set.
 4. If setup succeeds, the pane closes and a toast says so. If it fails, the pane stays
-   open on a shell in the worktree. Fix the problem there or in the settings, then type
-   `exit` to run setup again. Close the pane to skip setup.
+   open and asks what to do, one key press each:
+
+   - `r` runs setup again, with the settings read afresh.
+   - `s` opens a shell in the worktree, to fix the problem there. Leaving it (`exit`)
+     comes back to these choices.
+   - `q` skips setup and closes the pane. Closing the pane does the same.
 
 When a worktree the mod set up is removed (Herdr's Remove worktree, or `git worktree
 remove`), it runs the repo's `scripts.archive` in a background terminal from the main
@@ -69,6 +73,14 @@ From those files it uses:
   the worktree are never overwritten.
 - `environment_variables` and `environment_variables.local`.
 
+Both scripts run with the `PATH` a terminal of yours would have there. Herdr starts terminals
+with your login shell's `PATH`, which on macOS puts `/usr/bin` ahead of version managers set
+up in `~/.zshrc`, so a script could find the system's copy of a tool where your terminal
+finds yours. So first the mod asks your shell, as an interactive login shell in that folder,
+for its `PATH`. That works with zsh and bash. With another shell, or one that doesn't answer
+within 10 seconds, scripts keep Herdr's `PATH` and the pane says so. Only `PATH` is taken:
+anything else your `~/.zshrc` exports doesn't reach the scripts.
+
 The setup and archive scripts get these variables, each under a `HERDR_` name and a `CONDUCTOR_` name,
 so Conductor scripts work unchanged:
 
@@ -104,6 +116,11 @@ The mod keeps a marker file, `herdr-worktree-setup`, in the worktree's own git f
 and it goes when the worktree is removed. A worktree with no marker gets set up only if it
 was made after the mod was installed. Its creation time comes from the oldest entry in its
 HEAD reflog.
+
+The marker also lets a setup survive Herdr restarting, or the mod reloading. When the mod
+starts, it finds failed or running setups whose panes are still open and follows them again,
+so pressing `r` in one still runs setup again. If you pressed `r` while the mod wasn't
+running, setup runs again as soon as it starts.
 
 ## Development
 

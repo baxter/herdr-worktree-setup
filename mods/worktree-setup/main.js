@@ -1,7 +1,8 @@
 // Worktree setup: when a space opens on a git worktree made since this mod was installed, run
 // the repo's setup (Files to copy, then scripts.setup, from .herdr/ or Conductor's settings)
-// in a pane under its first terminal. Success closes the pane. Failure leaves it open on a
-// shell and posts a toast; leaving that shell runs setup again with the settings read afresh.
+// in a pane under its first terminal. Success closes the pane. Failure leaves it open, asking
+// whether to run setup again (with the settings read afresh), open a shell in the worktree, or
+// skip, and posts a toast.
 //
 // When a worktree it set up is removed, it runs the repo's scripts.archive in a background
 // terminal from the main checkout, and posts a toast with the result.
@@ -9,7 +10,7 @@
 // It draws nothing: put it in the layout as a floating block (see the README).
 
 import { View, div } from "gpui-kit";
-import { spaces, panes, exec, hc, readTextFile, run, notify, shared, setShared, home } from "herdr";
+import { spaces, panes, terminals, exec, hc, readTextFile, run, notify, shared, setShared, home } from "herdr";
 import { resolveSettings, FILES } from "./settings.js";
 import { SETUP_ARGV, ARCHIVE_RUNNER } from "./runner.js";
 import * as worktree from "./worktree.js";
@@ -92,8 +93,9 @@ export default class WorktreeSetup extends View {
       this.considered.add(space.id);
       cx.spawn(async () => {
         try {
-          const job = await this.newWorktree(space, pane);
-          if (job) await this.launch(job);
+          const found = await this.firstSight(space, pane);
+          if (found?.action === "launch") await this.launch(found.job);
+          else if (found?.action === "watch") this.watch(found.job, found.setupPane, found.state);
         } catch (error) {
           reportError("Worktree setup didn't start", error);
         }
@@ -102,8 +104,9 @@ export default class WorktreeSetup extends View {
     return div();
   }
 
-  // A job when the space shows a worktree that was made since install and has no marker yet.
-  async newWorktree(space, pane) {
+  // What to do about the worktree a space shows, the first time the mod looks at it (see
+  // worktree.onFirstSight): { action, job, setupPane, state }, or null to leave it alone.
+  async firstSight(space, pane) {
     const on = space.machine ?? null;
     const folder = space.folder || pane.cwd;
     if (!folder) return null;
@@ -112,10 +115,36 @@ export default class WorktreeSetup extends View {
     if (!repo?.linked || !repo.root || this.jobs.has(repo.gitDir)) return null;
 
     const marker = `${repo.gitDir}/${MARKER}`;
-    if ((await readTextFile(marker, { on })) !== null) return null; // set up already
-    const reflog = await git(repo.top, ["log", "-g", "--date=unix", "--format=%gd", "HEAD"], on);
-    if (!worktree.isNew(worktree.createdAt(reflog.out), shared(INSTALLED_AT))) return null;
-    return { repo, marker, on, name: worktree.workspaceName(repo.top), space: space.id, tab: pane.tab, anchor: pane.pane };
+    const text = await readTextFile(marker, { on });
+    let isNew = false;
+    if (text === null) {
+      const reflog = await git(repo.top, ["log", "-g", "--date=unix", "--format=%gd", "HEAD"], on);
+      isNew = worktree.isNew(worktree.createdAt(reflog.out), shared(INSTALLED_AT));
+    }
+    const setupPane = text === null ? null : this.setupPaneFor(marker);
+    const action = worktree.onFirstSight(text, { isNew, setupPaneOpen: Boolean(setupPane) });
+    if (!action) return null;
+    const job = {
+      repo, marker, on, name: worktree.workspaceName(repo.top), space: space.id,
+      tab: setupPane?.tab ?? pane.tab, anchor: pane.pane,
+    };
+    return { action, job, setupPane, state: worktree.parseMarker(text)?.state };
+  }
+
+  // The open pane of a setup that writes to this marker. Its terminal's command names it.
+  setupPaneFor(marker) {
+    const argument = `WORKTREE_SETUP_MARKER=${marker}`;
+    const terminal = terminals().find((t) => t.state === "live" && t.argv?.includes(argument));
+    return (terminal && panes().find((p) => p.terminal === terminal.address)) ?? null;
+  }
+
+  // Follows a setup pane that was open before the mod started, as poll() follows one it launched.
+  // A failed one has had its toast already.
+  watch(job, setupPane, state) {
+    job.before = new Set();
+    job.pane = setupPane.pane;
+    job.state = state;
+    this.jobs.set(job.repo.gitDir, job);
   }
 
   // Reads the settings and starts the setup pane under the job's anchor pane.
@@ -210,7 +239,7 @@ export default class WorktreeSetup extends View {
           job.state = "failed";
           notify({
             title: `Setup failed in ${job.name}`,
-            body: `Exit ${status.code}. Its pane is still open: fix the problem, then type exit to run setup again.`,
+            body: `Exit ${status.code}. Its pane is still open: run setup again, open a shell to fix it, or skip.`,
             level: "error",
             action: { name: "space.select", args: { id: job.space } },
           });

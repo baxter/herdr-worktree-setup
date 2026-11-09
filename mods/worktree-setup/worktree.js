@@ -76,3 +76,17 @@ export function parseMarker(text) {
   if (state === "failed") return { state, code: Number(code) };
   return null;
 }
+
+// What to do about a worktree the first time the mod sees its space: on start, after a reload,
+// or when the space opens. The mod keeps its setups in memory, so a setup it started before a
+// reload or a restart is only known by its marker (null when there's none) and its pane.
+// "launch": set it up. It's new, or the person pressed r to retry while nothing was watching.
+// "watch": follow the setup pane that's still open, as if the mod had just started it.
+// null: leave it alone. It's done, its pane was closed (setup abandoned), or it's from before install.
+export function onFirstSight(markerText, { isNew, setupPaneOpen }) {
+  if (markerText === null) return isNew ? "launch" : null;
+  const state = parseMarker(markerText)?.state;
+  if (state === "retry") return "launch";
+  if (state === "running" || state === "failed") return setupPaneOpen ? "watch" : null;
+  return null;
+}
