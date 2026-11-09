@@ -43,6 +43,19 @@ export function defaultBranch(stdout) {
 
 export const workspaceName = (path) => path.split("/").filter(Boolean).pop() ?? path;
 
+// A linked worktree's `.git` is a file, "gitdir: <its git folder>", which git may write
+// relative to the worktree. null when it isn't one.
+export function gitDirOf(gitFile, path) {
+  const dir = String(gitFile ?? "").match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
+  if (!dir) return null;
+  return dir.startsWith("/") ? dir : `${path}/${dir}`;
+}
+
+// A git folder's HEAD file, "ref: refs/heads/<branch>": the branch. null when it's detached.
+export function branchOf(head) {
+  return String(head ?? "").match(/^ref: refs\/heads\/(.+?)\s*$/m)?.[1] ?? null;
+}
+
 // The variables a setup script gets, each under Herdr's name and Conductor's, so Conductor
 // scripts work unchanged. CONDUCTOR_IS_LOCAL has no Herdr twin: Herdr has no cloud workspaces.
 export function setupVariables({ name, path, root, defaultBranch, port }) {

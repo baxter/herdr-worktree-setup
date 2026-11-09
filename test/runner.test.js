@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RUNNER, ARCHIVE_RUNNER, SETUP_ARGV, PROCESS_NAME } from "../mods/worktree-setup/runner.js";
@@ -191,11 +191,56 @@ function cleanUp(script, env = {}) {
   });
 }
 
-test("the archive script runs from the main checkout and keeps its exit code", () => {
-  const result = cleanUp('pwd\necho "cleaning $HERDR_WORKSPACE_NAME"');
-  assert.equal(result.status, 0);
-  assert.match(result.stdout, new RegExp(`\n${root}\ncleaning gone\n`));
-  assert.equal(cleanUp("exit 4").status, 4);
+// What the archive script sees of where it runs, one thing a line.
+const LOOK_AROUND = [
+  'basename "$PWD"',
+  "git rev-parse --abbrev-ref HEAD",
+  "git rev-parse --path-format=absolute --git-common-dir",
+  "cat README.md",
+  '[ -t 0 ] && echo "stdin is a terminal" || echo "stdin is not a terminal"',
+  'echo "$PWD" > "$HERDR_ROOT_PATH/../stand-in-path"',
+].join("\n");
+const standInPath = () => readFileSync(join(base, "stand-in-path"), "utf8").trim();
+const worktrees = () => git(root, "worktree", "list", "--porcelain");
+
+test("the archive script runs in a stand-in checkout of the worktree's branch, with its folder name", () => {
+  git(root, "branch", "gone-branch");
+  const result = cleanUp(LOOK_AROUND, { WORKTREE_ARCHIVE_BRANCH: "gone-branch" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`\ngone\ngone-branch\n${root}/.git\nhi\nstdin is not a terminal\n`));
+  assert.match(result.stdout, /in a checkout of gone-branch at /);
+  assert.ok(!existsSync(standInPath()), "the stand-in is removed");
+  assert.doesNotMatch(worktrees(), /\/gone\n/, "and git forgets it");
+});
+
+test("without a branch it can check out, the stand-in is detached at the main checkout's HEAD", () => {
+  for (const branch of ["", "no-such-branch", "main"]) { // main: checked out in the main checkout
+    const result = cleanUp(LOOK_AROUND, { WORKTREE_ARCHIVE_BRANCH: branch });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /\ngone\nHEAD\n/, branch);
+  }
+});
+
+test("the archive script keeps its exit code, and the stand-in goes either way", () => {
+  const result = cleanUp('echo "$PWD" > "$HERDR_ROOT_PATH/../stand-in-path"; exit 4');
+  assert.equal(result.status, 4);
+  assert.ok(!existsSync(standInPath()));
+  assert.doesNotMatch(worktrees(), /\/gone\n/);
+});
+
+test("when no stand-in can be made, the archive script runs from the main checkout and says so", () => {
+  // git can't record a new worktree while the repo's worktrees folder is read-only.
+  const records = join(root, ".git/worktrees");
+  chmodSync(records, 0o555);
+  try {
+    const result = cleanUp("pwd");
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /from the main checkout: a stand-in checkout couldn't be made/);
+    assert.match(result.stdout, new RegExp(`\n${root}\n`));
+  } finally {
+    chmodSync(records, 0o755);
+  }
+  assert.ok(existsSync(join(root, "README.md")), "the main checkout is left alone");
 });
 
 test("the archive script runs with the PATH the person's shell gives too", () => {

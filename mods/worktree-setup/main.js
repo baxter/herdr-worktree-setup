@@ -5,7 +5,7 @@
 // skip, and posts a toast.
 //
 // When a worktree it set up is removed, it runs the repo's scripts.archive in a background
-// terminal from the main checkout, and posts a toast with the result.
+// terminal, in a stand-in checkout named like the worktree, and posts a toast with the result.
 //
 // It draws nothing: put it in the layout as a floating block (see the README).
 
@@ -18,8 +18,9 @@ import * as worktree from "./worktree.js";
 // The marker file, kept in the worktree's own git folder so it goes when the worktree does.
 const MARKER = "herdr-worktree-setup";
 const INSTALLED_AT = "worktree-setup.installed-at";
-// Every worktree the mod has set up: { [path]: { root, port, on } }. Its ports come from here,
-// and so does the list of worktrees to clean up after.
+// Every worktree the mod has set up: { [path]: { root, port, on, branch } }. Its ports come
+// from here, and so does the list of worktrees to clean up after. `branch` is the one it was
+// last seen on (null when detached), for the archive script's stand-in checkout.
 const WORKTREES = "worktree-setup.worktrees";
 // How often to look for removed worktrees, and how soon after a space closes.
 const SWEEP_EVERY_MS = 60_000;
@@ -156,7 +157,10 @@ export default class WorktreeSetup extends View {
     const tracked = shared(WORKTREES) ?? {};
     const taken = Object.fromEntries(Object.entries(tracked).map(([path, record]) => [path, record.port]));
     const port = worktree.allocatePort(taken, repo.top);
-    if (!tracked[repo.top]) setShared(WORKTREES, { ...tracked, [repo.top]: { root: repo.root, port, on } });
+    if (!tracked[repo.top]) {
+      const branch = worktree.branchOf(await readTextFile(`${repo.gitDir}/HEAD`, { on }));
+      setShared(WORKTREES, { ...(shared(WORKTREES) ?? {}), [repo.top]: { root: repo.root, port, on, branch } });
+    }
     const env = {
       ...(await variables(settings, { name: job.name, path: repo.top, root: repo.root, port, on })),
       WORKTREE_SETUP_INCLUDE: settings.include,
@@ -176,7 +180,7 @@ export default class WorktreeSetup extends View {
   }
 
   // Finds worktrees the mod set up that are gone, forgets them and cleans up after them.
-  // A worktree is gone when its `.git` file is.
+  // A worktree is gone when its `.git` file is. One that's still there has its branch noted.
   async sweep() {
     this.sweeping = true;
     try {
@@ -187,7 +191,10 @@ export default class WorktreeSetup extends View {
         } catch {
           continue; // its machine is out of reach: look again next time
         }
-        if (gitFile !== null) continue;
+        if (gitFile !== null) {
+          await this.noteBranch(path, worktree.gitDirOf(gitFile, path), record.on);
+          continue;
+        }
         const { [path]: _gone, ...rest } = shared(WORKTREES) ?? {};
         setShared(WORKTREES, rest);
         const name = worktree.workspaceName(path);
@@ -198,13 +205,24 @@ export default class WorktreeSetup extends View {
     }
   }
 
-  // Runs scripts.archive in a background terminal, from the main checkout.
-  async cleanUp(name, path, { root, port, on }) {
+  // Keeps a tracked worktree's branch up to date, from its git folder's HEAD.
+  async noteBranch(path, gitDir, on) {
+    if (!gitDir) return;
+    const head = await readTextFile(`${gitDir}/HEAD`, { on }).catch(() => null);
+    const branch = worktree.branchOf(head);
+    const tracked = shared(WORKTREES) ?? {};
+    if (!tracked[path] || (tracked[path].branch ?? null) === branch) return;
+    setShared(WORKTREES, { ...tracked, [path]: { ...tracked[path], branch } });
+  }
+
+  // Runs scripts.archive in a background terminal. The runner makes the stand-in checkout.
+  async cleanUp(name, path, { root, port, on, branch }) {
     const settings = await readSettings(root, on);
     if (!settings.archive) return;
     const env = {
       ...(await variables(settings, { name, path, root, port, on })),
       WORKTREE_ARCHIVE_SCRIPT: settings.archive,
+      WORKTREE_ARCHIVE_BRANCH: branch ?? "",
     };
     const where = on ? ["--on", on] : [];
     const result = await hc(["run", "--bg", "--json", "--no-parent", "--no-notify", ...where, "--cwd", root, "--",

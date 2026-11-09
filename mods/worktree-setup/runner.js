@@ -136,17 +136,58 @@ done
 export const SETUP_ARGV = ["bash", "-c", `exec -a ${PROCESS_NAME} bash -c "$1"`, PROCESS_NAME, RUNNER];
 
 // The script a background terminal runs after a worktree is removed. Conductor runs its
-// archive script inside the workspace before deleting it; here the worktree is already gone,
-// so it runs from the main checkout (HERDR_ROOT_PATH). Its exit code is the script's.
+// archive script inside the workspace before deleting it. Herdr removes the worktree first,
+// so this makes a stand-in: a fresh checkout of the worktree's branch (detached at the main
+// checkout's HEAD when there's no branch, or it's checked out elsewhere), in a scratch folder
+// with the worktree's folder name. So a script that names things after basename "$PWD", runs
+// git, or runs a file from the repo works as it does in Conductor. It's a separate checkout,
+// so a script that deletes local files can't touch the main checkout. The worktree's own
+// untracked files (.env, installed packages) are gone and aren't in it.
 //
+// - Checking out runs no git hooks, and Git LFS files stay pointers: nothing to download.
+// - The script's stdin is /dev/null: there's nobody to answer a question, as in Conductor.
+// - The stand-in is removed when the script ends, however it ends. Its exit code is the script's.
+// - When the stand-in can't be made, the script runs from the main checkout, and says so.
+//
+//   HERDR_ROOT_PATH, HERDR_WORKSPACE_NAME, HERDR_WORKSPACE_PATH  (and the other HERDR_*, CONDUCTOR_*)
 //   WORKTREE_ARCHIVE_SCRIPT  the archive script, run with zsh (bash without zsh)
+//   WORKTREE_ARCHIVE_BRANCH  the branch the worktree was last seen on; empty when unknown
 export const ARCHIVE_RUNNER = SHELL_PATH + String.raw`
+dim() { printf '\033[2m%s\033[0m\n' "$1"; }
+quiet_git() { GIT_LFS_SKIP_SMUDGE=1 git -c core.hooksPath=/dev/null "$@" > /dev/null 2>&1; }
 printf '\033]0;Clean up · %s\007' "$HERDR_WORKSPACE_NAME"
 cd "$HERDR_ROOT_PATH" || exit 1
-printf '\033[2mCleaning up after %s, removed from %s\033[0m\n' "$HERDR_WORKSPACE_NAME" "$HERDR_WORKSPACE_PATH"
-printf '%s\n' "$WORKTREE_ARCHIVE_SCRIPT" | while IFS= read -r line; do printf '\033[2m  %s\033[0m\n' "$line"; done
-use_shell_path || printf '\033[2m  %s\033[0m\n' "with Herdr's PATH: your shell's couldn't be read"
+dim "Cleaning up after $HERDR_WORKSPACE_NAME, removed from $HERDR_WORKSPACE_PATH"
+
+scratch=$(mktemp -d) || exit 1
+stand_in=$scratch/$HERDR_WORKSPACE_NAME
+remove_stand_in() {
+  cd "$HERDR_ROOT_PATH" && quiet_git worktree remove --force "$stand_in"
+  rm -rf "$scratch"
+  quiet_git -C "$HERDR_ROOT_PATH" worktree prune
+}
+trap remove_stand_in EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Where the script runs. remove_stand_in only ever removes the stand-in, never this.
+here=$stand_in
+if [ -n "$WORKTREE_ARCHIVE_BRANCH" ] && quiet_git worktree add -q "$stand_in" "$WORKTREE_ARCHIVE_BRANCH"; then
+  dim "  in a checkout of $WORKTREE_ARCHIVE_BRANCH at $stand_in"
+elif quiet_git worktree add -q --detach "$stand_in"; then
+  dim "  in a checkout at $stand_in"
+else
+  here=$HERDR_ROOT_PATH
+  dim "  from the main checkout: a stand-in checkout couldn't be made"
+fi
+cd "$here" || exit 1
+printf '%s\n' "$WORKTREE_ARCHIVE_SCRIPT" | while IFS= read -r line; do dim "  $line"; done
+use_shell_path || dim "  with Herdr's PATH: your shell's couldn't be read"
 echo
-if command -v zsh > /dev/null 2>&1; then exec zsh -c "$WORKTREE_ARCHIVE_SCRIPT"; fi
-exec bash -c "$WORKTREE_ARCHIVE_SCRIPT"
+if command -v zsh > /dev/null 2>&1; then
+  zsh -c "$WORKTREE_ARCHIVE_SCRIPT" < /dev/null
+else
+  bash -c "$WORKTREE_ARCHIVE_SCRIPT" < /dev/null
+fi
 `;

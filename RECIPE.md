@@ -7,8 +7,8 @@ checkout, then runs `scripts.setup` from `.herdr/settings.toml` (or Conductor's
 succeeds, the pane closes and a toast says so. When it fails, the pane stays open and asks
 whether to run setup again, open a shell in the worktree, or skip setup, and a toast says
 what happened. When a worktree it set up is removed, it
-runs `scripts.archive` in a background terminal from the main checkout and posts a toast with
-the result.
+runs `scripts.archive` in a background terminal, in a stand-in checkout with the worktree's
+folder name, and posts a toast with the result.
 
 ![Worktree setup](preview.png)
 
@@ -95,7 +95,8 @@ the result.
   terminal is `hc(["run", "--bg", "--json", "--no-parent", "--no-notify", "--on", machine?,
   "--cwd", <main checkout>, "--", "env", "NAME=value"…, "bash", "-c", ARCHIVE_RUNNER])`. It uses
   `notify`, `shared` / `setShared` (install time; `worktree-setup.worktrees`, which maps each
-  worktree path to `{ root, port, on }`), `home`, and `exec("sh", ["-c", 'printf %s "$HOME"'],
+  worktree path to `{ root, port, on, branch }`; `branch` is read from `<git-dir>/HEAD` at
+  launch and at every sweep while the worktree exists, null when detached), `home`, and `exec("sh", ["-c", 'printf %s "$HOME"'],
   { on })` on other machines.
 - `settings.js`: three levels, first match wins: local > repo > user. Each level merges its
   files key by key, later winning:
@@ -137,11 +138,18 @@ the result.
   `$SHELL` ending in `/zsh` or `/bash`; otherwise, or on failure, the runner prints, dimmed,
   `with Herdr's PATH: your shell's couldn't be read`.
 
-  `ARCHIVE_RUNNER`, the second script, sets the title `Clean up · <name>`, `cd`s to
-  `HERDR_ROOT_PATH`, prints the script dimmed, then `exec`s `zsh -c` (else `bash -c`) on
-  `WORKTREE_ARCHIVE_SCRIPT`, so its exit code is the script's.
+  `ARCHIVE_RUNNER`, the second script, sets the title `Clean up · <name>` and makes the
+  stand-in from `HERDR_ROOT_PATH`: `git worktree add -q <mktemp -d>/<name>
+  $WORKTREE_ARCHIVE_BRANCH`, else `--detach` (no branch, or the branch is checked out
+  elsewhere), with `-c core.hooksPath=/dev/null` and `GIT_LFS_SKIP_SMUDGE=1`. It prints,
+  dimmed, `in a checkout of <branch> at <path>` (or `in a checkout at <path>`), or, when
+  both fail, `from the main checkout: a stand-in checkout couldn't be made` and runs there
+  instead. Then the script, dimmed, then `zsh -c` (else `bash -c`) on
+  `WORKTREE_ARCHIVE_SCRIPT` with stdin from `/dev/null`. An `EXIT` trap runs `git worktree
+  remove --force` on the stand-in, deletes the scratch folder and runs `git worktree prune`;
+  the exit code is the script's.
 - `worktree.js`: pure helpers (rev-parse parsing, creation time, ports, setup variables, env
-  arguments, marker parsing).
+  arguments, marker parsing, the git folder from a `.git` file, the branch from `HEAD`).
 - Variables given to the setup and archive scripts, each as `HERDR_<X>` and `CONDUCTOR_<X>` from one value
   (`setupVariables`): `WORKSPACE_NAME` (the worktree's folder name), `WORKSPACE_PATH`,
   `ROOT_PATH`, `DEFAULT_BRANCH` (from `origin/HEAD`, else `main`), `PORT` (the lowest free
@@ -201,9 +209,17 @@ the result.
 - Assumes `bash` and `git` on the machine (a remote space's machine too). Bare repositories
   have no main checkout and are skipped. Repository settings are read from the main
   checkout's working tree, not the default branch as Conductor does.
-- The archive script runs after the worktree is gone, from the main checkout, not inside
-  the workspace before deletion as Conductor's does. Only worktrees the mod launched a setup
-  for are tracked, so removing an older worktree runs no archive script.
+- The archive script runs after the worktree is gone: Herdr gives a mod no way in before
+  removal. Conductor runs it inside the workspace, and scripts rely on that: one names
+  databases after `basename "$PWD"`, runs `git`, and is set as a relative path
+  (`bin/…/cleanup.sh`). Run from the main checkout, such a script cleans up after the wrong
+  name. Hence the stand-in. Not a symlink to the main checkout: a script that deletes local
+  files would delete the main checkout's. It's a full checkout, so it takes seconds in a big
+  repo. Its branch is the last one a sweep saw, up to a minute stale.
+- Background terminals (`hc run --bg`) have a terminal on stdin. A script that asks "are you
+  sure?" when `[ -t 0 ]` would wait forever, so the archive script gets `/dev/null`.
+- Only worktrees the mod launched a setup for are tracked, so removing an older worktree runs
+  no archive script.
 - Don't count a settings file as configuration just because it exists: many people have a
   `~/.conductor/settings.toml` that holds only Conductor's own preferences, and that would
   set up every repo.
@@ -231,7 +247,9 @@ the result.
   pane. Neither does one in a repo whose only file is a `~/.conductor/settings.toml` that sets
   no scripts or `file_include_globs`.
 - With `scripts.archive` set, removing a worktree that was set up runs the archive script
-  from the main checkout within a few seconds, and `"Cleaned up after <name>"` appears. The
+  within a few seconds, in a folder with the worktree's name, on its branch, and with no
+  terminal on stdin. `"Cleaned up after <name>"` appears, and `git worktree list` shows no
+  stand-in afterwards. The
   worktree's entry leaves `shared("worktree-setup.worktrees")`.
 - After a failed setup, saving a file in the mod's folder (a reload), then fixing the
   settings and pressing `r`, still opens one new setup pane that runs and closes.

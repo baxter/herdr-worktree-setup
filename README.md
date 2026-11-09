@@ -25,8 +25,8 @@ When a space opens on a new worktree:
    - `q` skips setup and closes the pane. Closing the pane does the same.
 
 When a worktree the mod set up is removed (Herdr's Remove worktree, or `git worktree
-remove`), it runs the repo's `scripts.archive` in a background terminal from the main
-checkout, and a toast says how it went. It looks a few seconds after a space closes, and once
+remove`), it runs the repo's `scripts.archive` in a background terminal, and a toast says
+how it went. It looks a few seconds after a space closes, and once
 a minute otherwise. If the archive script fails, clicking the toast shows its output.
 
 ## Install
@@ -66,8 +66,8 @@ From those files it uses:
 
 - `scripts.setup`: the setup script. It runs with `zsh` (or `bash` when there's no zsh) in
   the new worktree.
-- `scripts.archive`: the archive script. It runs the same way, from the main checkout, once
-  the worktree is gone.
+- `scripts.archive`: the archive script. It runs the same way, once the worktree is gone
+  (see below).
 - Files to copy: `.worktreeinclude` at the repo root, else `file_include_globs`, else `.env*`.
   Patterns use `.gitignore` syntax, and only gitignored files are copied. Files already in
   the worktree are never overwritten.
@@ -80,6 +80,14 @@ finds yours. So first the mod asks your shell, as an interactive login shell in 
 for its `PATH`. That works with zsh and bash. With another shell, or one that doesn't answer
 within 10 seconds, scripts keep Herdr's `PATH` and the pane says so. Only `PATH` is taken:
 anything else your `~/.zshrc` exports doesn't reach the scripts.
+
+Conductor runs the archive script inside the workspace, just before deleting it. Herdr
+removes the worktree first, so the mod makes a stand-in for it: a fresh checkout of the
+worktree's branch, in a temporary folder with the worktree's folder name, removed again once
+the script ends. So a script that names things after its folder, runs `git`, or runs a file
+from the repo behaves as it does in Conductor. What the stand-in can't have is the removed
+worktree's own untracked files, such as `.env` or installed packages. The script's stdin
+isn't a terminal, so a script that asks for confirmation takes its non-interactive path.
 
 The setup and archive scripts get these variables, each under a `HERDR_` name and a `CONDUCTOR_` name,
 so Conductor scripts work unchanged:

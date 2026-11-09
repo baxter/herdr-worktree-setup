@@ -57,6 +57,15 @@ test("the marker says how setup went", () => {
   assert.equal(worktree.parseMarker(null), null);
 });
 
+test("a worktree's git folder and branch come from its .git file and HEAD", () => {
+  assert.equal(worktree.gitDirOf("gitdir: /r/.git/worktrees/x\n", "/w/x"), "/r/.git/worktrees/x");
+  assert.equal(worktree.gitDirOf("gitdir: ../r/.git/worktrees/x\n", "/w/x"), "/w/x/../r/.git/worktrees/x");
+  assert.equal(worktree.gitDirOf(null, "/w/x"), null);
+  assert.equal(worktree.branchOf("ref: refs/heads/feature/one\n"), "feature/one");
+  assert.equal(worktree.branchOf("3f2a9c0d1e\n"), null, "detached");
+  assert.equal(worktree.branchOf(null), null);
+});
+
 test("on first sight, a setup left over from before a reload is followed or retried", () => {
   const sight = (marker, isNew, setupPaneOpen) => worktree.onFirstSight(marker, { isNew, setupPaneOpen });
   assert.equal(sight(null, true, false), "launch", "new");
