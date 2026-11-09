@@ -99,3 +99,7 @@ HEAD reflog.
 `npm test` runs the tests with Node's built-in runner. They cover the TOML reader, the
 settings precedence, the worktree helpers, and the setup script itself against real git
 worktrees. `main.js` needs Herdr, so check it with `herdr-app check`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
