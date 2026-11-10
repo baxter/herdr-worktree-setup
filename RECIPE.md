@@ -1,14 +1,7 @@
 # Worktree setup
 
-When a space opens on a new git worktree, a pane slides in under its first terminal and
-runs the repository's setup: it copies gitignored files such as `.env` from the main
-checkout, then runs `scripts.setup` from `.herdr/settings.toml` (or Conductor's
-`.conductor/settings.toml`, which takes the same keys). When setup
-succeeds, the pane closes and a toast says so. When it fails, the pane stays open and asks
-whether to run setup again, open a shell in the worktree, or skip setup, and a toast says
-what happened. When a worktree it set up is removed, it
-runs `scripts.archive` in a background terminal, in a stand-in checkout with the worktree's
-folder name, and posts a toast with the result.
+Set up worktrees automatically as soon as they're created, and clean up after them when
+they're gone. Already using Conductor? Your scripts work as they are.
 
 ![Worktree setup](preview.png)
 

@@ -1,7 +1,7 @@
 # Worktree setup for Herdr
 
-Runs your repository's setup script whenever a new git worktree opens in Herdr. Put it in
-`.herdr/settings.toml`:
+Set up worktrees automatically as soon as they're created in Herdr, and clean up after them
+when they're gone. Put your repository's setup script in `.herdr/settings.toml`:
 
 ```toml
 [scripts]
