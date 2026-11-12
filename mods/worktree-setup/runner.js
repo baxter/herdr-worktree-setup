@@ -146,6 +146,8 @@ export const SETUP_ARGV = ["bash", "-c", `exec -a ${PROCESS_NAME} bash -c "$1"`,
 //
 // - Checking out runs no git hooks, and Git LFS files stay pointers: nothing to download.
 // - The script's stdin is /dev/null: there's nobody to answer a question, as in Conductor.
+// - git forgets worktrees whose folders are gone before the stand-in is made, so one deleted
+//   with rm -rf doesn't keep its branch from the stand-in.
 // - The stand-in is removed when the script ends, however it ends. Its exit code is the script's.
 // - When the stand-in can't be made, the script runs from the main checkout, and says so.
 //
@@ -173,6 +175,9 @@ trap 'exit 143' TERM
 
 # Where the script runs. remove_stand_in only ever removes the stand-in, never this.
 here=$stand_in
+# A worktree deleted with rm -rf is still recorded until a prune, and keeps its branch from
+# being checked out again.
+quiet_git worktree prune
 if [ -n "$WORKTREE_ARCHIVE_BRANCH" ] && quiet_git worktree add -q "$stand_in" "$WORKTREE_ARCHIVE_BRANCH"; then
   dim "  in a checkout of $WORKTREE_ARCHIVE_BRANCH at $stand_in"
 elif quiet_git worktree add -q --detach "$stand_in"; then

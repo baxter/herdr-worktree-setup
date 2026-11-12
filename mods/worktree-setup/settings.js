@@ -30,9 +30,10 @@ export const FILES = {
 
 const isTable = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 
-// Later tables win, key by key, at every depth.
+// Later tables win, key by key, at every depth. The result has no prototype, so a JSON file's
+// own "__proto__" key is copied as a key rather than becoming the table's prototype.
 function merge(...tables) {
-  const out = {};
+  const out = Object.create(null);
   for (const table of tables) {
     for (const [key, value] of Object.entries(table ?? {})) {
       out[key] = isTable(value) && isTable(out[key]) ? merge(out[key], value) : value;

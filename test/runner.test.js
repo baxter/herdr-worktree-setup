@@ -213,6 +213,16 @@ test("the archive script runs in a stand-in checkout of the worktree's branch, w
   assert.doesNotMatch(worktrees(), /\/gone\n/, "and git forgets it");
 });
 
+test("a worktree deleted with rm -rf, which git still records, doesn't keep its branch from the stand-in", () => {
+  const removed = join(base, "deleted-by-hand");
+  git(root, "worktree", "add", "-q", "-b", "deleted-branch", removed);
+  rmSync(removed, { recursive: true, force: true });
+  const result = cleanUp(LOOK_AROUND, { WORKTREE_ARCHIVE_BRANCH: "deleted-branch" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /in a checkout of deleted-branch at /);
+  assert.match(result.stdout, /\ngone\ndeleted-branch\n/);
+});
+
 test("without a branch it can check out, the stand-in is detached at the main checkout's HEAD", () => {
   for (const branch of ["", "no-such-branch", "main"]) { // main: checked out in the main checkout
     const result = cleanUp(LOOK_AROUND, { WORKTREE_ARCHIVE_BRANCH: branch });

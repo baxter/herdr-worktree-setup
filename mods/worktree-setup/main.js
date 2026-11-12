@@ -25,6 +25,8 @@ const WORKTREES = "worktree-setup.worktrees";
 // How often to look for removed worktrees, and how soon after a space closes.
 const SWEEP_EVERY_MS = 60_000;
 const SWEEP_AFTER_CLOSE_MS = 3_000;
+// How long a launched setup's pane has to appear. run() can't say whether the split worked.
+const LAUNCH_WAIT_MS = 10_000;
 
 async function git(cwd, args, on) {
   const result = await exec("git", args, { cwd, on });
@@ -56,6 +58,13 @@ async function variables(settings, { name, path, root, port, on }) {
 
 function reportError(title, error) {
   notify({ title, body: String(error?.message ?? error), level: "error" });
+}
+
+// For poll(), every 1.5 s: a job or cleanup that keeps failing to be followed (its machine is
+// out of reach, say) is reported the first time only, and tried again at the next poll.
+function reportOnce(entry, title, error) {
+  if (!entry.reported) reportError(title, error);
+  entry.reported = true;
 }
 
 export default class WorktreeSetup extends View {
@@ -174,6 +183,7 @@ export default class WorktreeSetup extends View {
     job.before = new Set(tabPanes.map((p) => p.pane));
     job.pane = null;
     job.state = "running";
+    job.launchedAt = Date.now();
     run("pane.split", { direction: "down", pane: anchor.pane, argv: ["env", ...worktree.envArguments(env), ...SETUP_ARGV] });
     run("pane.focus", { pane: anchor.pane }); // the agent keeps the keyboard
     this.jobs.set(repo.gitDir, job);
@@ -239,50 +249,68 @@ export default class WorktreeSetup extends View {
       // A copy: a retry deletes its job and launch() adds it back, and a Map visits a key
       // added during the loop again, which would launch it twice.
       for (const [gitDir, job] of [...this.jobs]) {
-        const tabPanes = panes().filter((p) => p.tab === job.tab);
-        job.pane ??= tabPanes.find((p) => !job.before.has(p.pane))?.pane ?? null;
-        // The runner exits after writing "ok" or "retry", and a pane closes itself when its
-        // program exits, so the mod never closes one. Read the marker before checking whether
-        // the pane is gone: a pane that closed after "ok" wasn't closed by the person.
-        const status = worktree.parseMarker(await readTextFile(job.marker, { on: job.on }));
-        if (status?.state === "ok") {
-          this.jobs.delete(gitDir);
-          notify({ title: `${job.name} is set up`, level: "success", timeout: 4000 });
-        } else if (status?.state === "retry") {
-          this.jobs.delete(gitDir);
-          await this.launch(job).catch((error) => reportError("Worktree setup didn't start", error));
-        } else if (job.pane && !tabPanes.some((p) => p.pane === job.pane)) {
-          this.jobs.delete(gitDir); // the person closed it
-        } else if (status?.state === "failed" && job.state !== "failed") {
-          job.state = "failed";
-          notify({
-            title: `Setup failed in ${job.name}`,
-            body: `Exit ${status.code}. Its pane is still open: run setup again, open a shell to fix it, or skip.`,
-            level: "error",
-            action: { name: "space.select", args: { id: job.space } },
-          });
+        try {
+          const tabPanes = panes().filter((p) => p.tab === job.tab);
+          job.pane ??= tabPanes.find((p) => !job.before.has(p.pane))?.pane ?? null;
+          // The runner exits after writing "ok" or "retry", and a pane closes itself when its
+          // program exits, so the mod never closes one. Read the marker before checking whether
+          // the pane is gone: a pane that closed after "ok" wasn't closed by the person.
+          const status = worktree.parseMarker(await readTextFile(job.marker, { on: job.on }));
+          // Until the runner writes "running", the marker says what it did before launch():
+          // nothing, or the "retry" that launched it. So a "retry" counts once the pane is seen.
+          const started = status !== null && status.state !== "retry";
+          if (status?.state === "ok") {
+            this.jobs.delete(gitDir);
+            notify({ title: `${job.name} is set up`, level: "success", timeout: 4000 });
+          } else if (status?.state === "retry" && job.pane) {
+            this.jobs.delete(gitDir);
+            await this.launch(job).catch((error) => reportError("Worktree setup didn't start", error));
+          } else if (!job.pane && !started && Date.now() - job.launchedAt > LAUNCH_WAIT_MS) {
+            this.jobs.delete(gitDir); // the split failed: its anchor pane went first, say
+            notify({
+              title: `Setup didn't open in ${job.name}`,
+              body: "Its pane never appeared. Setup runs again when Herdr next starts.",
+              level: "error",
+            });
+          } else if (job.pane && !tabPanes.some((p) => p.pane === job.pane)) {
+            this.jobs.delete(gitDir); // the person closed it
+          } else if (status?.state === "failed" && job.state !== "failed") {
+            job.state = "failed";
+            notify({
+              title: `Setup failed in ${job.name}`,
+              body: `Exit ${status.code}. Its pane is still open: run setup again, open a shell to fix it, or skip.`,
+              level: "error",
+              action: { name: "space.select", args: { id: job.space } },
+            });
+          }
+        } catch (error) {
+          reportOnce(job, `Couldn't follow setup in ${job.name}`, error);
         }
       }
 
       for (const [address, cleanup] of [...this.cleanups]) {
-        const result = await hc(["get", address, "--json"]);
-        if (result.code !== 0) {
-          this.cleanups.delete(address); // someone removed the terminal
-          continue;
-        }
-        const terminal = JSON.parse(result.stdout);
-        if (terminal.state !== "finished") continue;
-        this.cleanups.delete(address);
-        if (terminal.exit_code === 0) {
-          notify({ title: `Cleaned up after ${cleanup.name}`, level: "success", timeout: 4000 });
-          await hc(["rm", address]);
-        } else {
-          notify({
-            title: `Cleanup failed after ${cleanup.name}`,
-            body: `Exit ${terminal.exit_code}. Click to see its output (or run: hc read ${address}).`,
-            level: "error",
-            action: { name: "terminal.peek", args: { terminal: address } },
-          });
+        try {
+          const result = await hc(["get", address, "--json"]);
+          if (result.code !== 0) {
+            this.cleanups.delete(address); // someone removed the terminal
+            continue;
+          }
+          const terminal = JSON.parse(result.stdout);
+          if (terminal.state !== "finished") continue;
+          this.cleanups.delete(address);
+          if (terminal.exit_code === 0) {
+            notify({ title: `Cleaned up after ${cleanup.name}`, level: "success", timeout: 4000 });
+            await hc(["rm", address]);
+          } else {
+            notify({
+              title: `Cleanup failed after ${cleanup.name}`,
+              body: `Exit ${terminal.exit_code}. Click to see its output (or run: hc read ${address}).`,
+              level: "error",
+              action: { name: "terminal.peek", args: { terminal: address } },
+            });
+          }
+        } catch (error) {
+          reportOnce(cleanup, `Couldn't follow cleanup after ${cleanup.name}`, error);
         }
       }
     } finally {

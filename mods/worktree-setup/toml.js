@@ -72,7 +72,7 @@ class Parser {
         this.expect("]]");
         const parent = this.descend(root, path.slice(0, -1));
         const last = path[path.length - 1];
-        if (parent[last] === undefined) parent[last] = [];
+        if (!Object.hasOwn(parent, last)) parent[last] = [];
         if (!Array.isArray(parent[last])) this.fail(`"${path.join(".")}" is not an array of tables`);
         table = {};
         parent[last].push(table);
@@ -96,7 +96,7 @@ class Parser {
   descend(table, path) {
     let at = table;
     for (const part of path) {
-      if (at[part] === undefined) at[part] = {};
+      if (!Object.hasOwn(at, part)) at[part] = {};
       let next = at[part];
       if (Array.isArray(next)) next = next[next.length - 1];
       if (typeof next !== "object" || next === null || Array.isArray(next)) this.fail(`"${part}" is not a table`);
@@ -113,10 +113,13 @@ class Parser {
     const value = this.value();
     const parent = this.descend(table, path.slice(0, -1));
     const last = path[path.length - 1];
-    if (last in parent) this.fail(`"${path.join(".")}" is defined twice`);
+    if (Object.hasOwn(parent, last)) this.fail(`"${path.join(".")}" is defined twice`);
     parent[last] = value;
   }
 
+  // A key's parts. Tables are plain objects, and setting "__proto__" on one replaces its
+  // prototype (or, through a table that inherits Object.prototype, every object's), so no
+  // part may be "__proto__". Conductor's settings never use it.
   key() {
     const parts = [];
     for (;;) {
@@ -129,6 +132,7 @@ class Parser {
         if (this.position === start) this.fail("expected a key");
         parts.push(this.text.slice(start, this.position));
       }
+      if (parts[parts.length - 1] === "__proto__") this.fail(`"__proto__" can't be a key`);
       this.skipSpaces();
       if (this.peek() !== ".") return parts;
       this.position++;

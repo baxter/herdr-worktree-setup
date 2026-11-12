@@ -28,7 +28,11 @@ they're gone. Already using Conductor? Your scripts work as they are.
   Archive: success `"Cleaned up after <name>"` (level success, 4 s). Failure `"Cleanup
   failed after <name>"`, body `Exit N. Click to see its output (or run: hc read <address>).`
   (level error; clicking it runs `terminal.peek` on that terminal). One that can't start:
-  `"Cleanup after <name> didn't start"` with the reason.
+  `"Cleanup after <name> didn't start"` with the reason. A setup pane that never appears
+  (10 s after the split): `"Setup didn't open in <name>"`, body `Its pane never appeared.
+  Setup runs again when Herdr next starts.` (level error). A marker or terminal that can't
+  be read while polling: `"Couldn't follow setup in <name>"` or `"Couldn't follow cleanup
+  after <name>"` with the reason, once per setup or cleanup.
 
 ## How it behaves
 
@@ -154,6 +158,17 @@ they're gone. Already using Conductor? Your scripts work as they are.
 
 ## Watch out
 
+- It runs whatever a repository's settings name, with no prompt: `scripts.setup` when a
+  worktree is made, `scripts.archive` when one goes. It reads files in the repository and
+  the home folder, outside its own. Only use it with repositories you trust.
+- `run()` returns `null`, so a failed `pane.split` (its anchor pane went between `panes()`
+  and the command) is invisible. A job whose pane hasn't appeared and whose runner hasn't
+  written to the marker within 10 s is dropped, with a toast. Until then the marker still
+  says what it did before `launch()`, so a `retry` there is the one being answered: act on
+  `retry` only once the job's pane has been seen, or a slow start launches setup twice.
+- Each job's and cleanup's step in `poll()` is tried on its own. A remote machine that drops
+  makes `readTextFile` or `hc get` fail every 1.5 s, so the failure is reported once and the
+  poll goes on to the next entry.
 - Setups live in `this.jobs`, in memory. A mod reload (any save under the mod's folder) or
   a Herdr restart empties it while setup panes stay open. Without `onFirstSight`, a failed
   setup's marker made the worktree look done, and choosing to retry wrote `retry` with
@@ -199,7 +214,8 @@ they're gone. Already using Conductor? Your scripts work as they are.
 - Spaces the person opens on existing worktrees made before install are skipped on purpose.
   Clearing `worktree-setup.installed-at` would make every unmarked worktree look new.
 - `space.new` selects the new space, so testing live moves the person's window.
-- Assumes `bash` and `git` on the machine (a remote space's machine too). Bare repositories
+- macOS and Linux only, not Windows: the runners need `bash`, `env`, `sh`, `mktemp`, `sed`
+  and `git` on the machine (a remote space's machine too). Bare repositories
   have no main checkout and are skipped. Repository settings are read from the main
   checkout's working tree, not the default branch as Conductor does.
 - The archive script runs after the worktree is gone: Herdr gives a mod no way in before
@@ -209,6 +225,9 @@ they're gone. Already using Conductor? Your scripts work as they are.
   name. Hence the stand-in. Not a symlink to the main checkout: a script that deletes local
   files would delete the main checkout's. It's a full checkout, so it takes seconds in a big
   repo. Its branch is the last one a sweep saw, up to a minute stale.
+- A worktree deleted with `rm -rf` is still recorded by git, and `git worktree add` refuses
+  its branch (`already used by worktree at …`) until a prune. So the archive runner runs
+  `git worktree prune` before making the stand-in, not only in its EXIT trap.
 - Background terminals (`hc run --bg`) have a terminal on stdin. A script that asks "are you
   sure?" when `[ -t 0 ]` would wait forever, so the archive script gets `/dev/null`.
 - Only worktrees the mod launched a setup for are tracked, so removing an older worktree runs
