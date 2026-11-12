@@ -102,3 +102,9 @@ test("levels still come first: Conductor's local file beats Herdr's repo file", 
   assert.equal(result.setup, "local");
   assert.equal(resolve({ herdrUser: '[scripts]\nsetup = "user"', repoToml: '[scripts]\nsetup = "repo"' }).setup, "repo");
 });
+
+test("a __proto__ key in a JSON file is a key like any other, not where settings are looked up", () => {
+  const result = resolve({ repoJson: '{"__proto__": {"scripts": {"setup": "from the prototype"}}}' });
+  assert.equal(result.setup, "");
+  assert.equal(result.configured, false);
+});

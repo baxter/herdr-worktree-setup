@@ -11,6 +11,11 @@ setup = "npm ci"
 It also reads [Conductor](https://conductor.build)'s settings, so a team that already has a
 `.conductor/settings.toml` (or `conductor.json`) needs no changes.
 
+The mod runs whatever a repository's settings name, without asking first: `scripts.setup`
+when a worktree is created and `scripts.archive` when one is removed. It reads those settings
+from the repository and from your home folder. As with Conductor, only use it with
+repositories you trust.
+
 When a space opens on a new worktree:
 
 1. A pane opens under the space's first terminal, like Conductor's setup panel.
@@ -30,6 +35,8 @@ how it went. It looks a few seconds after a space closes, and once
 a minute otherwise. If the archive script fails, clicking the toast shows its output.
 
 ## Install
+
+It works on macOS and Linux, on any machine with `bash` and `git`. Windows isn't supported.
 
 1. Copy `mods/worktree-setup` into `~/.config/herdr-app/mods/`.
 2. The mod draws nothing, but it has to be in your layout to run. Add it as a floating

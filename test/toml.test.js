@@ -87,3 +87,19 @@ test("mistakes are reported with their line", () => {
   assert.throws(() => parseToml("a = 1 b = 2"), /line 1: expected the end of the line/);
   assert.throws(() => parseToml("a = nope"), /line 1: unexpected "nope"/);
 });
+
+test("keys named like an object's built-in properties are ordinary keys", () => {
+  assert.deepEqual(parseToml('constructor = 1\ntoString = "x"\n[hasOwnProperty]\na = 1\n[[valueOf]]\nb = 2'), {
+    constructor: 1,
+    toString: "x",
+    hasOwnProperty: { a: 1 },
+    valueOf: [{ b: 2 }],
+  });
+});
+
+test("__proto__ can't be a key, so a file can't change what every object inherits", () => {
+  for (const text of ["[__proto__]\na = 1", "[[__proto__]]", "__proto__.a = 1", "a = { __proto__ = 1 }", '"__proto__" = 1']) {
+    assert.throws(() => parseToml(text), /line 1: "__proto__" can't be a key/, text);
+  }
+  assert.equal({}.a, undefined);
+});
